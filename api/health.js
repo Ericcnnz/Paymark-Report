@@ -10,6 +10,8 @@ export default async function handler(req, res) {
     envHints: {
       PAYMARK_USER: !!process.env.PAYMARK_USER,
       PAYMARK_PASS: !!process.env.PAYMARK_PASS,
+      PAYMARK_COOKIE: process.env.PAYMARK_COOKIE ? "(set)" : "",
+      PAYMARK_LS_JSON: process.env.PAYMARK_LS_JSON ? "(set)" : "",
       MAIL_TO: process.env.MAIL_TO || "",
       MAIL_FROM: process.env.MAIL_FROM || "",
       SMTP_HOST: process.env.SMTP_HOST || "",
