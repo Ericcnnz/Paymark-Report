@@ -15,42 +15,141 @@ function getBearerFromEnv() {
     const auth = typeof authRaw === "string" ? JSON.parse(authRaw) : authRaw;
     const token = auth?.access_token || auth?.token || null;
     return token || null;
-  } catch (e) { return null; }
+  } catch { return null; }
 }
 
-function buildCsv(rows) {
-  const headers = ["transactionDateTime","cardType","transactionType","amount","currency","authorisationCode","referenceNumber","maskedPan","result"];
+function formatNZDate(iso) {
+  if (!iso) return "";
+  try {
+    const dt = DateTime.fromISO(iso, { zone: "utc" }).setZone("Pacific/Auckland");
+    return dt.toFormat("dd/LL/yyyy 'at' h:mm:ss a");
+  } catch { return iso; }
+}
+function toMoney(n) {
+  if (n == null) return 0;
+  const num = Number(n);
+  return Number.isFinite(num) ? num : 0;
+}
+function toMoneyStr(n) { return toMoney(n).toFixed(2); }
+
+function normalizeRows(json) {
+  if (!json) return [];
+  if (Array.isArray(json)) return json;
+  if (Array.isArray(json.transactions)) return json.transactions;
+  if (Array.isArray(json.data)) return json.data;
+  if (Array.isArray(json.items)) return json.items;
+  if (Array.isArray(json.results)) return json.results;
+  if (json.content && Array.isArray(json.content)) return json.content;
+  return [];
+}
+
+/** Build CSV with UI-like columns */
+function buildCsvUI(rows) {
+  const headers = ["Terminal ID","Transaction Date (NZ)","Settlement","Last 4","TXN #","Card","Type","Purchase","Cash","Status"];
   const out = [headers.join(",")];
   for (const r of rows) {
+    const type = (Number(r.tranType) === 5 || (r.purchaseAmount ?? 0) > 0) ? "Purchase" : (r.tranType ?? "");
     const line = [
-      r.transactionDateTime ?? r.time ?? "",
-      r.cardType ?? "",
-      r.transactionType ?? r.type ?? "",
-      (r.amount ?? r.totalAmount ?? r.txnAmount ?? r.settlementAmount ?? "").toString().replaceAll(",", ""),
-      r.currency ?? "NZD",
-      r.authorisationCode ?? r.authCode ?? "",
-      r.referenceNumber ?? r.reference ?? r.ref ?? "",
-      r.maskedPan ?? r.cardNumberMasked ?? "",
-      r.result ?? r.status ?? ""
+      r.terminalId ?? "",
+      formatNZDate(r.transactionTime ?? r.transactionDateTime ?? ""),
+      r.settlementDate ?? "",
+      r.suffix ?? r.last4 ?? "",
+      r.transactionNumber ?? r.txnNumber ?? "",
+      r.cardLogo ?? r.cardType ?? "",
+      type,
+      toMoneyStr(r.purchaseAmount ?? r.transactionAmount ?? r.amount ?? 0),
+      toMoneyStr(r.cashoutAmount ?? r.cashAmount ?? 0),
+      r.status ?? r.result ?? ""
     ].map(v => (v ?? "").toString().replaceAll(",", " ")).join(",");
     out.push(line);
   }
   return out.join("\n");
 }
 
-async function fetchTx(url, bearer, accept) {
-  const headers = {
-    "Authorization": `Bearer ${bearer}`,
-    "Accept": accept,
-    "Origin": "https://insights.paymark.co.nz",
-    "Referer": "https://insights.paymark.co.nz/",
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-    "Accept-Language": "en-NZ,en;q=0.9"
-  };
-  const res = await fetch(url, { headers, cache: "no-store" });
+/** Simple SVG summary (safe for email as attachment) */
+function buildSvgSummary(rows, ymd) {
+  const width = 900, height = 420, pad = 24;
+  const bg = "#0B1220"; const fg = "#E6EDF3"; const sub = "#9DB1C7"; const acc = "#32D583";
+  const totalCount = rows.length;
+  let purchase = 0, cashout = 0;
+  let lastTime = "";
+  const buckets = Array.from({length: 24}, () => 0);
+
+  for (const r of rows) {
+    purchase += toMoney(r.purchaseAmount ?? r.transactionAmount ?? r.amount ?? 0);
+    cashout += toMoney(r.cashoutAmount ?? r.cashAmount ?? 0);
+    const t = r.transactionTime ?? r.transactionDateTime;
+    if (t) {
+      const dt = DateTime.fromISO(t, {zone:'utc'}).setZone('Pacific/Auckland');
+      buckets[dt.hour]++;
+      const f = dt.toFormat("h:mm a");
+      if (!lastTime || dt.toMillis() > DateTime.fromISO(lastTime).toMillis()) lastTime = t;
+    }
+  }
+
+  const lastNZ = lastTime ? DateTime.fromISO(lastTime,{zone:'utc'}).setZone('Pacific/Auckland').toFormat("h:mm a") : "-";
+  const maxBucket = Math.max(1, ...buckets);
+  const chartW = width - pad*2, chartH = 160, chartY = 200, chartX = pad;
+  const barW = chartW / 24.0 - 2;
+
+  let bars = "";
+  for (let h=0; h<24; h++) {
+    const val = buckets[h];
+    const bh = Math.round((val / maxBucket) * chartH);
+    const x = Math.round(chartX + h * (barW+2));
+    const y = Math.round(chartY + (chartH - bh));
+    bars += `<rect x="${x}" y="${y}" width="${Math.max(1,Math.floor(barW))}" height="${bh}" rx="3" fill="${acc}" opacity="${val?0.9:0.25}"/>`;
+  }
+
+  const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+  <rect width="100%" height="100%" fill="${bg}"/>
+  <text x="${pad}" y="${pad+8}" fill="${sub}" font-family="Inter,ui-sans-serif,system-ui,Segoe UI" font-size="14">NZ AutoTech • Paymark • ${ymd}</text>
+
+  <text x="${pad}" y="${pad+56}" fill="${fg}" font-size="36" font-weight="700">Transactions Summary</text>
+
+  <g transform="translate(${pad},${pad+76})">
+    <rect x="0" y="0" width="${(width-pad*2)}" height="88" rx="12" fill="#111A2C"/>
+    <text x="16" y="30" fill="${sub}" font-size="14">Count</text>
+    <text x="16" y="64" fill="${fg}" font-size="28" font-weight="700">${totalCount}</text>
+
+    <text x="160" y="30" fill="${sub}" font-size="14">Purchase</text>
+    <text x="160" y="64" fill="${fg}" font-size="28" font-weight="700">$${purchase.toFixed(2)}</text>
+
+    <text x="340" y="30" fill="${sub}" font-size="14">Cash</text>
+    <text x="340" y="64" fill="${fg}" font-size="28" font-weight="700">$${cashout.toFixed(2)}</text>
+
+    <text x="${(width-pad*2)-200}" y="30" fill="${sub}" font-size="14">Last TXN (NZ)</text>
+    <text x="${(width-pad*2)-200}" y="64" fill="${fg}" font-size="24" font-weight="600" text-anchor="start">${lastNZ}</text>
+  </g>
+
+  <text x="${pad}" y="${chartY-16}" fill="${sub}" font-size="14">Transactions by Hour (NZ)</text>
+  <rect x="${chartX}" y="${chartY}" width="${chartW}" height="${chartH}" rx="8" fill="#0F1B33"/>
+  ${bars}
+  <text x="${chartX}" y="${chartY + chartH + 22}" fill="${sub}" font-size="12">0</text>
+  <text x="${chartX + chartW - 12}" y="${chartY + chartH + 22}" fill="${sub}" font-size="12">23h</text>
+
+  <text x="${pad}" y="${height-pad}" fill="${sub}" font-size="12">Generated by Paymark Reporter</text>
+</svg>`;
+  return svg;
+}
+
+async function fetchTx(url, bearer, acceptHeader) {
+  const accept = acceptHeader || process.env.PAYMARK_ACCEPT || "application/vnd.paymark_api+json;version=2.0";
+  const res = await fetch(url, {
+    headers: {
+      "Authorization": `Bearer ${bearer}`,
+      "Accept": accept,
+      "Origin": "https://insights.paymark.co.nz",
+      "Referer": "https://insights.paymark.co.nz/",
+      "User-Agent": "Mozilla/5.0 PaymarkReporter/16f",
+      "Accept-Language": "en-NZ,en;q=0.9"
+    },
+    cache: "no-store"
+  });
   const text = await res.text();
   let json = null; try { json = JSON.parse(text); } catch {}
-  return { status: res.status, ok: res.ok, json, bodyText: text, usedAccept: accept };
+  return { status: res.status, ok: res.ok, json, bodyText: text, accept };
 }
 
 export default async function handler(req, res) {
@@ -59,7 +158,7 @@ export default async function handler(req, res) {
     const debug = urlObj.searchParams.get("debug") === "1";
     const page = urlObj.searchParams.get("page") || "1";
     const limit = urlObj.searchParams.get("limit") || "100";
-    const overrideAccept = urlObj.searchParams.get("accept") || process.env.PAYMARK_ACCEPT || "";
+    const overrideAccept = urlObj.searchParams.get("accept") || "";
 
     const bearer = getBearerFromEnv();
     if (!bearer) return res.status(500).json({ ok:false, error:"缺少令牌：请设置 PAYMARK_BEARER，或在 PAYMARK_LS_JSON 中包含 auth.access_token。" });
@@ -80,40 +179,20 @@ export default async function handler(req, res) {
     apiUrl.searchParams.set("page", page);
     apiUrl.searchParams.set("limit", limit);
 
-    const accepts = overrideAccept ? [overrideAccept] : [
-      "application/json, text/plain, */*",
-      "application/json; charset=utf-8",
-      "application/json",
-      "application/vnd.api+json",
-      "application/hal+json",
-      "application/*+json",
-      "*/*"
-    ];
-
-    let resp = null;
-    for (const a of accepts) {
-      resp = await fetchTx(apiUrl.toString(), bearer, a);
-      if (resp.ok) break;
-      if (resp.status !== 406) break;
+    const resp = await fetchTx(apiUrl.toString(), bearer, overrideAccept);
+    if (!resp.ok) {
+      return res.status(500).json({ ok:false, status: resp.status, accept: resp.accept, sample: (resp.bodyText || "").slice(0,300), api: apiUrl.toString() });
     }
 
-    if (!resp?.ok) {
-      return res.status(500).json({ ok:false, status: resp?.status ?? 0, usedAccept: resp?.usedAccept, sample: (resp?.bodyText ?? "").slice(0,300), api: apiUrl.toString() });
-    }
-
-    let rows = [];
-    const json = resp.json;
-    if (Array.isArray(json)) rows = json;
-    else if (Array.isArray(json?.data)) rows = json.data;
-    else if (Array.isArray(json?.items)) rows = json.items;
-    else if (Array.isArray(json?.results)) rows = json.results;
-    else if (json?.content && Array.isArray(json.content)) rows = json.content;
+    const rows = normalizeRows(resp.json);
 
     if (debug) {
-      return res.status(200).json({ ok:true, count: rows.length, status: resp.status, accept: resp.usedAccept, api: apiUrl.toString(), sample: rows[0] ?? null });
+      return res.status(200).json({ ok:true, count: rows.length, status: resp.status, accept: resp.accept, api: apiUrl.toString(), sample: rows[0] ?? null });
     }
 
-    const csv = buildCsv(rows);
+    const csv = buildCsvUI(rows);
+    const svg = buildSvgSummary(rows, ymd);
+
     const mailEnv = {
       MAIL_TO: process.env.MAIL_TO,
       MAIL_FROM: process.env.MAIL_FROM,
@@ -132,7 +211,10 @@ export default async function handler(req, res) {
       from: mailEnv.MAIL_FROM, to: mailEnv.MAIL_TO,
       subject: `Paymark Transactions — ${ymd} (NZ)`,
       text: `Attached are today's transactions (${ymd} NZ). Count: ${rows.length}.`,
-      attachments: [{ filename: `transactions_${ymd}.csv`, content: csv, contentType: "text/csv; charset=utf-8" }]
+      attachments: [
+        { filename: `transactions_${ymd}.csv`, content: csv, contentType: "text/csv; charset=utf-8" },
+        { filename: `transactions_${ymd}.svg`, content: svg, contentType: "image/svg+xml" }
+      ]
     });
     res.status(200).json({ ok:true, sent:true, count: rows.length, dateNZ: ymd });
   } catch (e) {

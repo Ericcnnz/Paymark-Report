@@ -10,7 +10,7 @@ export default async function handler(req, res) {
     envHints: {
       PAYMARK_BEARER: process.env.PAYMARK_BEARER ? "(set)" : "",
       PAYMARK_LS_JSON: process.env.PAYMARK_LS_JSON ? "(set)" : "",
-      PAYMARK_ACCEPT: process.env.PAYMARK_ACCEPT || "",
+      PAYMARK_ACCEPT: process.env.PAYMARK_ACCEPT || "application/vnd.paymark_api+json;version=2.0",
       MAIL_TO: process.env.MAIL_TO || "",
       MAIL_FROM: process.env.MAIL_FROM || "",
       SMTP_HOST: process.env.SMTP_HOST || "",
