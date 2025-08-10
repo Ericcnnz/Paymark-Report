@@ -38,14 +38,14 @@ async function loginAndGrab(page, timeFromUTC, timeToUTC) {
   await passSel.type(PAYMARK_PASS, { delay: 10 });
 
   console.log("Phase: try_submit_login");
-  // 优先点击“Sign in/Log in”按钮；否则回退为回车或提交 form
+  // 优先点击“Sign in/Log in/Continue”按钮；否则回退为回车或提交 form
   const clicked = await page.evaluate(() => {
     const btns = Array.from(document.querySelectorAll('button, input[type="submit"]'));
     const hit = btns.find((b) => {
-      const t = (b.innerText || b.getAttribute('value') || '').toLowerCase();
+      const t = (b.innerText || b.value || '').toLowerCase();
       return /sign\s*in|log\s*in|login|continue/.test(t);
     });
-    if (hit) { (hit as HTMLElement).click(); return true; }
+    if (hit) { hit.click(); return true; }
     const form = document.querySelector('form');
     if (form) {
       // @ts-ignore
@@ -68,8 +68,9 @@ async function loginAndGrab(page, timeFromUTC, timeToUTC) {
   try {
     console.log("Phase: click_transactions_tab_if_any");
     await page.evaluate(() => {
-      const a = Array.from(document.querySelectorAll('a')).find(el => /transactions/i.test(el.textContent || ''));
-      if (a) (a as HTMLElement).click();
+      const links = Array.from(document.querySelectorAll('a'));
+      const el = links.find((node) => /transactions/i.test(node.textContent || ''));
+      if (el) el.click();
     });
     await page.waitForTimeout(800);
   } catch (e) {
