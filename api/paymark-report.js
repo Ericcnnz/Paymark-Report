@@ -15,9 +15,7 @@ function getBearerFromEnv() {
     const auth = typeof authRaw === "string" ? JSON.parse(authRaw) : authRaw;
     const token = auth?.access_token || auth?.token || null;
     return token || null;
-  } catch (e) {
-    return null;
-  }
+  } catch (e) { return null; }
 }
 
 function buildCsv(rows) {
@@ -40,51 +38,19 @@ function buildCsv(rows) {
   return out.join("\n");
 }
 
-async function fetchWithAccepts(url, bearer) {
-  const accepts = [
-    "application/json, text/plain, */*",
-    "application/json; charset=utf-8",
-    "application/json",
-    "*/*"
-  ];
-  let last = null;
-  for (const a of accepts) {
-    const res = await fetch(url, {
-      headers: {
-        "Authorization": `Bearer ${bearer}`,
-        "Accept": a,
-        "Content-Type": "application/json",
-        "User-Agent": "NZ AutoTech Paymark Reporter/1.0"
-      },
-      cache: "no-store"
-    });
-    const text = await res.text();
-    let json = null;
-    try { json = JSON.parse(text); } catch {}
-    last = { status: res.status, ok: res.ok, bodyText: text, json, acceptTried: a };
-    if (res.ok) return last;
-    if (res.status !== 406) return last; // other errors, break
-  }
-  return last;
-}
-
-async function sendEmail({ subject, text, csv, ymd, mailEnv }) {
-  const transporter = nodemailer.createTransport({
-    host: mailEnv.SMTP_HOST,
-    port: Number(mailEnv.SMTP_PORT || 587),
-    secure: false,
-    auth: { user: mailEnv.SMTP_USER, pass: mailEnv.SMTP_PASS }
-  });
-  const attachments = [
-    { filename: `transactions_${ymd}.csv`, content: csv, contentType: "text/csv; charset=utf-8" }
-  ];
-  await transporter.sendMail({
-    from: mailEnv.MAIL_FROM,
-    to: mailEnv.MAIL_TO,
-    subject,
-    text,
-    attachments
-  });
+async function fetchTx(url, bearer, accept) {
+  const headers = {
+    "Authorization": `Bearer ${bearer}`,
+    "Accept": accept,
+    "Origin": "https://insights.paymark.co.nz",
+    "Referer": "https://insights.paymark.co.nz/",
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+    "Accept-Language": "en-NZ,en;q=0.9"
+  };
+  const res = await fetch(url, { headers, cache: "no-store" });
+  const text = await res.text();
+  let json = null; try { json = JSON.parse(text); } catch {}
+  return { status: res.status, ok: res.ok, json, bodyText: text, usedAccept: accept };
 }
 
 export default async function handler(req, res) {
@@ -93,11 +59,10 @@ export default async function handler(req, res) {
     const debug = urlObj.searchParams.get("debug") === "1";
     const page = urlObj.searchParams.get("page") || "1";
     const limit = urlObj.searchParams.get("limit") || "100";
+    const overrideAccept = urlObj.searchParams.get("accept") || process.env.PAYMARK_ACCEPT || "";
 
     const bearer = getBearerFromEnv();
-    if (!bearer) {
-      return res.status(500).json({ ok:false, error:"缺少令牌：请设置 PAYMARK_BEARER，或在 PAYMARK_LS_JSON 中包含 auth.access_token。" });
-    }
+    if (!bearer) return res.status(500).json({ ok:false, error:"缺少令牌：请设置 PAYMARK_BEARER，或在 PAYMARK_LS_JSON 中包含 auth.access_token。" });
 
     const nzNow = DateTime.now().setZone("Pacific/Auckland");
     const startNZ = nzNow.startOf("day");
@@ -115,9 +80,25 @@ export default async function handler(req, res) {
     apiUrl.searchParams.set("page", page);
     apiUrl.searchParams.set("limit", limit);
 
-    const resp = await fetchWithAccepts(apiUrl.toString(), bearer);
+    const accepts = overrideAccept ? [overrideAccept] : [
+      "application/json, text/plain, */*",
+      "application/json; charset=utf-8",
+      "application/json",
+      "application/vnd.api+json",
+      "application/hal+json",
+      "application/*+json",
+      "*/*"
+    ];
+
+    let resp = null;
+    for (const a of accepts) {
+      resp = await fetchTx(apiUrl.toString(), bearer, a);
+      if (resp.ok) break;
+      if (resp.status !== 406) break;
+    }
+
     if (!resp?.ok) {
-      return res.status(500).json({ ok:false, status: resp?.status ?? 0, acceptTried: resp?.acceptTried, sample: (resp?.bodyText ?? "").slice(0,300), api: apiUrl.toString() });
+      return res.status(500).json({ ok:false, status: resp?.status ?? 0, usedAccept: resp?.usedAccept, sample: (resp?.bodyText ?? "").slice(0,300), api: apiUrl.toString() });
     }
 
     let rows = [];
@@ -129,7 +110,7 @@ export default async function handler(req, res) {
     else if (json?.content && Array.isArray(json.content)) rows = json.content;
 
     if (debug) {
-      return res.status(200).json({ ok:true, count: rows.length, status: resp.status, used:"bearer", accept: resp.acceptTried, api: apiUrl.toString(), sample: rows[0] ?? null });
+      return res.status(200).json({ ok:true, count: rows.length, status: resp.status, accept: resp.usedAccept, api: apiUrl.toString(), sample: rows[0] ?? null });
     }
 
     const csv = buildCsv(rows);
@@ -141,16 +122,17 @@ export default async function handler(req, res) {
       SMTP_USER: process.env.SMTP_USER,
       SMTP_PASS: process.env.SMTP_PASS
     };
-    for (const k of Object.keys(mailEnv)) {
-      if (!mailEnv[k]) return res.status(500).json({ ok:false, error:`缺少邮件环境变量: ${k}` });
-    }
+    for (const k of Object.keys(mailEnv)) if (!mailEnv[k]) return res.status(500).json({ ok:false, error:`缺少邮件环境变量: ${k}` });
 
-    await sendEmail({
+    const transporter = nodemailer.createTransport({
+      host: mailEnv.SMTP_HOST, port: Number(mailEnv.SMTP_PORT || 587), secure: false,
+      auth: { user: mailEnv.SMTP_USER, pass: mailEnv.SMTP_PASS }
+    });
+    await transporter.sendMail({
+      from: mailEnv.MAIL_FROM, to: mailEnv.MAIL_TO,
       subject: `Paymark Transactions — ${ymd} (NZ)`,
       text: `Attached are today's transactions (${ymd} NZ). Count: ${rows.length}.`,
-      csv,
-      ymd,
-      mailEnv
+      attachments: [{ filename: `transactions_${ymd}.csv`, content: csv, contentType: "text/csv; charset=utf-8" }]
     });
     res.status(200).json({ ok:true, sent:true, count: rows.length, dateNZ: ymd });
   } catch (e) {
