@@ -4,5 +4,11 @@
       "path": "/api/paymark-report",
       "schedule": "30 7 * * *"
     }
+  ],
+  "rewrites": [
+    {
+      "source": "/",
+      "destination": "/api/paymark-report"
+    }
   ]
 }
