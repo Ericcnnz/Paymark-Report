@@ -19,11 +19,13 @@ const {
 
 async function loginAndGrab(page, timeFromUTC, timeToUTC) {
     // widen default timeouts
-    page.setDefaultNavigationTimeout(90000);
-    page.setDefaultTimeout(90000);
+    page.setDefaultNavigationTimeout(120000);
+    page.setDefaultTimeout(120000);
     await page.setUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
   // 登录
-  await page.goto("https://insights.paymark.co.nz/", { waitUntil: "domcontentloaded" });
+  console.log("Phase: open_home");
+    await page.goto("https://insights.paymark.co.nz/", { waitUntil: "domcontentloaded" });
+    console.log("URL after home goto:", page.url());
 
   // 等待并尝试找到登录框（根据实际页面微调）
   await page.waitForSelector('input[type="email"], input[name="username"], input#username', { timeout: 45000 });
@@ -31,9 +33,11 @@ async function loginAndGrab(page, timeFromUTC, timeToUTC) {
   const passSel  = await page.$('input[type="password"], input[name="password"], input#password');
   if (!emailSel || !passSel) throw new Error("找不到登录输入框（需要调整选择器）。");
 
-  await emailSel.click({ clickCount: 3 });
+  console.log('Phase: fill_username');
+    await emailSel.click({ clickCount: 3 });
   await emailSel.type(PAYMARK_USER, { delay: 10 });
   await passSel.type(PAYMARK_PASS, { delay: 10 });
+    console.log('Phase: submit_login');
 
   await Promise.all([
     page.keyboard.press("Enter"),
@@ -45,7 +49,9 @@ async function loginAndGrab(page, timeFromUTC, timeToUTC) {
   let pageIndex = 1;
   while (pageIndex <= 10) {
     // 先去首页，确保顶栏可见
+    console.log("Phase: open_home");
     await page.goto("https://insights.paymark.co.nz/", { waitUntil: "domcontentloaded" });
+    console.log("URL after home goto:", page.url());
 
     // 点击顶部导航中的 Transactions
     try {
@@ -64,11 +70,14 @@ async function loginAndGrab(page, timeFromUTC, timeToUTC) {
     url.searchParams.set("transactionTimeFrom", timeFromUTC);
     url.searchParams.set("transactionTimeTo", timeToUTC);
 
+    console.log("Phase: goto_transactions_url", url.toString());
     await page.goto(url.toString(), { waitUntil: "domcontentloaded" });
+    console.log("URL after transactions goto:", page.url());
     await page.waitForSelector("table", { timeout: 45000 }).catch(() => {});
 
-    await Promise.race([
-        page.waitForSelector("table", { timeout: 90000 }),
+    console.log('Phase: wait_for_table_or_empty');
+      await Promise.race([
+        page.waitForSelector("table", { timeout: 120000 }),
         page.waitForXPath("//*[contains(., 'No transactions to display.')]", { timeout: 90000 })
       ]).catch(() => {});
 
