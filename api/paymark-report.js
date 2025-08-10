@@ -18,6 +18,10 @@ const {
 } = process.env;
 
 async function loginAndGrab(page, timeFromUTC, timeToUTC) {
+    // widen default timeouts
+    page.setDefaultNavigationTimeout(90000);
+    page.setDefaultTimeout(90000);
+    await page.setUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
   // 登录
   await page.goto("https://insights.paymark.co.nz/", { waitUntil: "domcontentloaded" });
 
@@ -40,6 +44,16 @@ async function loginAndGrab(page, timeFromUTC, timeToUTC) {
   const allRows = [];
   let pageIndex = 1;
   while (pageIndex <= 10) {
+    // 先去首页，确保顶栏可见
+    await page.goto("https://insights.paymark.co.nz/", { waitUntil: "domcontentloaded" });
+
+    // 点击顶部导航中的 Transactions
+    try {
+      const [tab1] = await page.$x("//a[contains(., 'Transactions') or contains(., 'TRANSACTIONS')]");
+      if (tab1) { await tab1.click(); await page.waitForTimeout(1000); }
+    } catch (_) {}
+
+    // 然后再构造带参数的交易页 URL 并跳转
     const url = new URL("https://insights.paymark.co.nz/transaction");
     url.searchParams.set("cardAcceptorIdCode", "10243212");
     url.searchParams.set("cardType", "All Cards");
@@ -53,7 +67,12 @@ async function loginAndGrab(page, timeFromUTC, timeToUTC) {
     await page.goto(url.toString(), { waitUntil: "domcontentloaded" });
     await page.waitForSelector("table", { timeout: 45000 }).catch(() => {});
 
-    const rows = await page.$$eval("table tbody tr", trs => {
+    await Promise.race([
+        page.waitForSelector("table", { timeout: 90000 }),
+        page.waitForXPath("//*[contains(., 'No transactions to display.')]", { timeout: 90000 })
+      ]).catch(() => {});
+
+      const rows = await page.$$eval("table tbody tr", trs => {
       return trs.map(tr => {
         const tds = Array.from(tr.querySelectorAll("td")).map(td => td.innerText.trim());
         return {
