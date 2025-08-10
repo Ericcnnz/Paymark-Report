@@ -8,10 +8,7 @@ export default async function handler(req, res) {
   res.status(200).json({
     ok: true,
     envHints: {
-      PAYMARK_USER: !!process.env.PAYMARK_USER,
-      PAYMARK_PASS: !!process.env.PAYMARK_PASS,
-      PAYMARK_COOKIE: process.env.PAYMARK_COOKIE ? "(set)" : "",
-      PAYMARK_COOKIE_ACCOUNT: process.env.PAYMARK_COOKIE_ACCOUNT ? "(set)" : "",
+      PAYMARK_BEARER: process.env.PAYMARK_BEARER ? "(set)" : "",
       PAYMARK_LS_JSON: process.env.PAYMARK_LS_JSON ? "(set)" : "",
       MAIL_TO: process.env.MAIL_TO || "",
       MAIL_FROM: process.env.MAIL_FROM || "",
@@ -21,6 +18,7 @@ export default async function handler(req, res) {
       SMTP_PASS: process.env.SMTP_PASS ? "(set)" : ""
     },
     nzDate: nzNow.toISO(),
-    nzWindowUTC: { from: startNZ.toUTC().toISO(), to: endNZ.toUTC().toISO() }
+    nzWindowUTC: { from: startNZ.toUTC().toISO(), to: endNZ.toUTC().toISO() },
+    note: "Set PAYMARK_BEARER or set PAYMARK_LS_JSON containing auth.access_token"
   });
 }
