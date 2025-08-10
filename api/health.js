@@ -19,6 +19,7 @@ export default async function handler(req, res) {
       SMTP_PASS: process.env.SMTP_PASS ? "(set)" : ""
     },
     nzDate: nzNow.toISO(),
-    nzWindowUTC: { from: startNZ.toUTC().toISO(), to: endNZ.toUTC().toISO() }
+    nzWindowUTC: { from: startNZ.toUTC().toISO(), to: endNZ.toUTC().toISO() },
+    note: "You can override bearer per-call via ?token=<ACCESS_TOKEN>."
   });
 }
