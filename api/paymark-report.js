@@ -40,20 +40,32 @@ function buildCsv(rows) {
   return out.join("\n");
 }
 
-async function fetchTransactions(apiUrl, bearer) {
-  const res = await fetch(apiUrl, {
-    headers: {
-      "Authorization": `Bearer ${bearer}`,
-      "Accept": "application/json",
-      "Content-Type": "application/json",
-      "User-Agent": "NZ AutoTech Paymark Reporter/1.0"
-    },
-    cache: "no-store"
-  });
-  const text = await res.text();
-  let json = null;
-  try { json = JSON.parse(text); } catch {}
-  return { status: res.status, ok: res.ok, bodyText: text, json };
+async function fetchWithAccepts(url, bearer) {
+  const accepts = [
+    "application/json, text/plain, */*",
+    "application/json; charset=utf-8",
+    "application/json",
+    "*/*"
+  ];
+  let last = null;
+  for (const a of accepts) {
+    const res = await fetch(url, {
+      headers: {
+        "Authorization": `Bearer ${bearer}`,
+        "Accept": a,
+        "Content-Type": "application/json",
+        "User-Agent": "NZ AutoTech Paymark Reporter/1.0"
+      },
+      cache: "no-store"
+    });
+    const text = await res.text();
+    let json = null;
+    try { json = JSON.parse(text); } catch {}
+    last = { status: res.status, ok: res.ok, bodyText: text, json, acceptTried: a };
+    if (res.ok) return last;
+    if (res.status !== 406) return last; // other errors, break
+  }
+  return last;
 }
 
 async function sendEmail({ subject, text, csv, ymd, mailEnv }) {
@@ -103,12 +115,13 @@ export default async function handler(req, res) {
     apiUrl.searchParams.set("page", page);
     apiUrl.searchParams.set("limit", limit);
 
-    const { status, ok, json, bodyText } = await fetchTransactions(apiUrl.toString(), bearer);
-    if (!ok) {
-      return res.status(500).json({ ok:false, status, sample: bodyText.slice(0,300), api: apiUrl.toString() });
+    const resp = await fetchWithAccepts(apiUrl.toString(), bearer);
+    if (!resp?.ok) {
+      return res.status(500).json({ ok:false, status: resp?.status ?? 0, acceptTried: resp?.acceptTried, sample: (resp?.bodyText ?? "").slice(0,300), api: apiUrl.toString() });
     }
 
     let rows = [];
+    const json = resp.json;
     if (Array.isArray(json)) rows = json;
     else if (Array.isArray(json?.data)) rows = json.data;
     else if (Array.isArray(json?.items)) rows = json.items;
@@ -116,7 +129,7 @@ export default async function handler(req, res) {
     else if (json?.content && Array.isArray(json.content)) rows = json.content;
 
     if (debug) {
-      return res.status(200).json({ ok:true, count: rows.length, status, used:"bearer", api: apiUrl.toString(), sample: rows[0] ?? null });
+      return res.status(200).json({ ok:true, count: rows.length, status: resp.status, used:"bearer", accept: resp.acceptTried, api: apiUrl.toString(), sample: rows[0] ?? null });
     }
 
     const csv = buildCsv(rows);

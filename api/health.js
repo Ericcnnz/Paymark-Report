@@ -18,7 +18,6 @@ export default async function handler(req, res) {
       SMTP_PASS: process.env.SMTP_PASS ? "(set)" : ""
     },
     nzDate: nzNow.toISO(),
-    nzWindowUTC: { from: startNZ.toUTC().toISO(), to: endNZ.toUTC().toISO() },
-    note: "Set PAYMARK_BEARER or set PAYMARK_LS_JSON containing auth.access_token"
+    nzWindowUTC: { from: startNZ.toUTC().toISO(), to: endNZ.toUTC().toISO() }
   });
 }
