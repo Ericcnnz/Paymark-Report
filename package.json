@@ -1,0 +1,9 @@
+{
+  "type": "module",
+  "dependencies": {
+    "puppeteer-core": "^22.15.0",
+    "@sparticuz/chromium": "^124.0.0",
+    "luxon": "^3.5.0",
+    "nodemailer": "^6.9.13"
+  }
+}
