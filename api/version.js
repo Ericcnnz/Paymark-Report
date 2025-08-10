@@ -1,5 +1,5 @@
 
 export const config = { runtime: "nodejs" };
 export default function handler(req, res) {
-  res.status(200).json({ version: "fixed8" });
+  res.status(200).json({ version: "fixed9" });
 }
