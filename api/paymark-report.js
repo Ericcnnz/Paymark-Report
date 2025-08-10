@@ -19,10 +19,10 @@ const {
 
 async function loginAndGrab(page, timeFromUTC, timeToUTC) {
   // 登录
-  await page.goto("https://insights.paymark.co.nz/", { waitUntil: "networkidle2" });
+  await page.goto("https://insights.paymark.co.nz/", { waitUntil: "domcontentloaded" });
 
   // 等待并尝试找到登录框（根据实际页面微调）
-  await page.waitForSelector('input[type="email"], input[name="username"], input#username', { timeout: 60000 });
+  await page.waitForSelector('input[type="email"], input[name="username"], input#username', { timeout: 45000 });
   const emailSel = await page.$('input[type="email"], input[name="username"], input#username');
   const passSel  = await page.$('input[type="password"], input[name="password"], input#password');
   if (!emailSel || !passSel) throw new Error("找不到登录输入框（需要调整选择器）。");
@@ -33,7 +33,7 @@ async function loginAndGrab(page, timeFromUTC, timeToUTC) {
 
   await Promise.all([
     page.keyboard.press("Enter"),
-    page.waitForNavigation({ waitUntil: "networkidle2", timeout: 60000 })
+    page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 45000 })
   ]);
 
   // 抓取交易（支持翻页）
@@ -50,8 +50,8 @@ async function loginAndGrab(page, timeFromUTC, timeToUTC) {
     url.searchParams.set("transactionTimeFrom", timeFromUTC);
     url.searchParams.set("transactionTimeTo", timeToUTC);
 
-    await page.goto(url.toString(), { waitUntil: "networkidle2" });
-    await page.waitForSelector("table", { timeout: 60000 }).catch(() => {});
+    await page.goto(url.toString(), { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("table", { timeout: 45000 }).catch(() => {});
 
     const rows = await page.$$eval("table tbody tr", trs => {
       return trs.map(tr => {
